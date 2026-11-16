@@ -1,0 +1,7 @@
+criterio,metrica,mejor_modelo,valor
+"Test fijo (sep/2025–ago/2026, h = 12)",MASE,ARIMA_Auto,0.4732
+"Test fijo (sep/2025–ago/2026, h = 12)",Winkler 95 %,ARIMAX_Covid,408.7
+"Origen rodante (21 ventanas, h = 12)",MASE,ETS_Auto,0.7284
+"Origen rodante (21 ventanas, h = 12)",Winkler 95 %,ARIMAX_Covid,542.1
+Rango medio (4 métricas),promedio de rangos,ARIMAX_Covid,2.25
+Modelo usado en la previsión oficial,—,ARIMAX_Covid,NA

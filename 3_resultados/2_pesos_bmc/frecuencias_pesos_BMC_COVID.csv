@@ -1,0 +1,4 @@
+modelo,n,frecuencia,peso
+ETS_Auto,0,0,0
+ARIMA_Auto,0,0,0
+ARIMAX_Covid,200,1,1

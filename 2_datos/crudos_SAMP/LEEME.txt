@@ -1,0 +1,13 @@
+Datos crudos SAMP/ANEEL — NO incluidos en el repositorio
+
+Los 12 archivos samp-2015.csv ... samp-2026.csv pesan ~2,9 GB en total
+y no son necesarios para ejecutar el script.
+
+Están en el equipo local, en la carpeta original del proyecto:
+  2_datos/crudos_SAMP/
+
+La serie mensual ya consolidada y lista para modelar es:
+  2_datos/serie_mensual_light_gwh.csv   (140 meses, ene/2015 - ago/2026)
+
+Procedencia: SAMP/ANEEL, consumo facturado de Light SESA (TUSD CATIVO + LIVRE),
+filtrado por CNPJ y mercado "Regular".

@@ -1,0 +1,23 @@
+# ---- Datos crudos SAMP (~2,9 GB) -------------------------------------------
+# No se suben al repositorio: son la procedencia del dato y el script no los
+# necesita para correr. La serie consolidada SÍ está en 2_datos/.
+2_datos/crudos_SAMP/*
+!2_datos/crudos_SAMP/LEEME.txt
+
+# ---- Caché pesada y regenerable --------------------------------------------
+# El rolling cache (60 KB) sí se versiona; el bootstrap se puede recalcular.
+3_resultados/0_cache/bmc_bootstrap*.rds
+
+# ---- Archivos temporales de R / RStudio ------------------------------------
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj.user/
+
+# ---- Gráficos sueltos y basura del sistema ---------------------------------
+Rplots.pdf
+Thumbs.db
+desktop.ini
+
+# ---- Comprimidos ------------------------------------------------------------
+*.zip
