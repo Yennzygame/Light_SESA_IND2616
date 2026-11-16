@@ -36,6 +36,8 @@ además del título, está mal. Los números van grandes; el resto se dice.
 
 IND2616 · Análise de Séries Temporais · PUC-Rio · [A] · [B] · [C]
 
+<img src="qr_repo.png" width="110" alt="Repositorio GitHub: github.com/Yennzygame/Light_SESA_IND2616" style="position:absolute; right:0.7em; bottom:2.2em;">
+
 <!-- 0:15 — A
 "Buenos días. La pregunta no es solo cuánto vamos a consumir: es cuánto, y con
 qué confiabilidad. El trabajo no termina en un número; termina en un protocolo
