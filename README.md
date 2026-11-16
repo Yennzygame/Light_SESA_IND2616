@@ -30,7 +30,6 @@ Light_SESA_IND2616/
 │   ├── 4_rolling_origin/              métricas del origen rodante
 │   ├── 5_pronostico/                  previsión, IC y comparación de modelos
 │   └── 6_apendices/                   impacto 2020 y cambios estructurales
-├── 5_estudio/                         guía de estudio, slides y guion
 ├── LEEME.md                           estructura y reglas de uso
 └── RESULTADOS.md                      todos los números y qué archivo citar
 ```
@@ -68,9 +67,6 @@ Detalle completo, mes por mes y justificación de la elección:
 
 - [LEEME.md](LEEME.md) — estructura del proyecto y cómo ejecutarlo.
 - [RESULTADOS.md](RESULTADOS.md) — resultados canónicos.
-- [5_estudio/GUIA_DE_ESTUDIO.md](5_estudio/GUIA_DE_ESTUDIO.md) — guía completa,
-  banco de preguntas y ejercicios.
-- [5_estudio/SLIDES_10MIN.md](5_estudio/SLIDES_10MIN.md) — presentación (Marp).
 
 ## Datos
 

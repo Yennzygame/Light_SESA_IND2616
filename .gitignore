@@ -4,6 +4,10 @@
 2_datos/crudos_SAMP/*
 !2_datos/crudos_SAMP/LEEME.txt
 
+# ---- Material de estudio (slides, guía, guion) ------------------------------
+# No forma parte del repositorio público.
+5_estudio/
+
 # ---- Caché pesada y regenerable --------------------------------------------
 # El rolling cache (60 KB) sí se versiona; el bootstrap se puede recalcular.
 3_resultados/0_cache/bmc_bootstrap*.rds
