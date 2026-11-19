@@ -19,7 +19,7 @@
 #   Parte 2  Intervención COVID y partición train / test
 #   Parte 3  Análisis exploratorio (EDA)
 #   Parte 4  Pilar 1: ETS, ARIMA y ARIMAX-COVID
-#   Parte 5  Pilar 2: pesos del BMC por bootstrap (STL + MBB)
+#   Parte 5  Pilar 2: pesos del BMC por bootstrap (STL + MBB, selección fuera de muestra)
 #   Parte 6  Evaluación fuera de muestra (test fijo, h = 12)
 #   Parte 7  Evaluación robusta: origen rodante (21 ventanas, h = 12)
 #   Parte 8  Comparación, selección del modelo y previsión sep/2026 – ago/2027
@@ -35,10 +35,10 @@
 #           (opcional: strucchange, para la Parte 9)
 #
 # NOTA SOBRE TIEMPOS DE EJECUCIÓN
-#   El bootstrap de la Parte 5 es la parte cara (~200 réplicas x 3 modelos).
-#   Su resultado queda en caché (bmc_bootstrap.rds). En las corridas
-#   siguientes el script lo reutiliza y termina en ~3 minutos. Para forzar el
-#   recálculo pon `forzar_bootstrap <- TRUE`.
+#   El bootstrap de la Parte 5 es la parte cara (~200 réplicas x 3 modelos,
+#   cada una con ajuste y pronóstico de validación h = 12). Su resultado
+#   queda en caché (bmc_bootstrap.rds). En corridas siguientes se reutiliza.
+#   Para forzar el recálculo pon `forzar_bootstrap <- TRUE`.
 # ==============================================================================
 
 suppressPackageStartupMessages({
@@ -165,17 +165,13 @@ num_cores <- max(1L, min(4L, parallel::detectCores() - 1L))
 #
 # Por defecto NO se escribe a mano: lo elige la comparación de la Parte 8.1.
 # La regla es el promedio de rangos sobre cuatro métricas fuera de muestra
-# (MASE y Winkler 95 % en el test fijo y en el origen rodante), que es la misma
-# que usa el script del compañero (Light_ARIMAX_BMC_IND2616_final_v2.R).
+# (MASE y Winkler 95 % en el test fijo y en el origen rodante).
 #
-# Por qué no AICc: el AICc mide ajuste DENTRO de la muestra. La dummy COVID
-# reduce tanto la varianza residual que el ARIMAX gana siempre el AICc (de ahí
-# los pesos 0/0/1 del BMC), pero eso no dice nada sobre capacidad de pronóstico.
-#
-# Por qué no solo el MASE: el MASE premia acertar el número; el Winkler premia
-# intervalos angostos que cubran. Cada criterio por separado es inestable entre
-# ventanas (Parte 7). El promedio de rangos combina los dos tipos de error y no
-# depende de una sola ventana.
+# No se usa AICc en el proyecto (ni para los pesos del BMC ni para la selección
+# final): la decisión se basa en desempeño fuera de muestra. El MASE premia
+# acierto puntual; el Winkler premia intervalos angostos que cubran. Como cada
+# criterio puede ser inestable entre ventanas (Parte 7), el promedio de rangos
+# combina ambos y no depende de una sola ventana.
 #
 # Override manual: deja `modelo_final_forzado <- NULL` para que decida la tabla.
 # Si quieres fijarlo, escribe uno de estos nombres:
@@ -409,8 +405,6 @@ print(
 cat("Interpretación: la caída estimada del consumo en abr–jun/2020 fue de",
     round(coef_covid, 1), "GWh/mes.\n")
 
-cat("\n--- Comparación por AICc ---\n")
-print(glance(fit_modelos) %>% select(.model, AICc) %>% arrange(AICc))
 
 # Diagnóstico de residuos.
 try(print(fit_modelos %>% select(ARIMAX_Covid) %>% gg_tsresiduals()), silent = TRUE)
@@ -419,24 +413,29 @@ cat("\n--- Ljung-Box sobre residuos (lag 24) ---\n")
 try(print(fit_modelos %>% augment() %>% features(.innov, ljung_box, lag = 24) %>% select(.model, lb_stat, lb_pvalue)), silent = TRUE)
 
 # ==============================================================================
-# PARTE 5 — PILAR 2: PESOS DEL BMC POR BOOTSTRAP
+# PARTE 5 - PILAR 2: PESOS DEL BMC POR BOOTSTRAP
 # ==============================================================================
 #
-# Procedimiento (documentado en el artículo):
+# Procedimiento:
 #   1. Se estima el efecto COVID y se le resta a la serie del entrenamiento.
 #   2. STL con estacionalidad periódica separa tendencia, estacionalidad y residuo.
 #   3. Se remuestrean bloques consecutivos de residuos (Moving Block Bootstrap),
 #      con largo de bloque elegido por el método de Hall–Horowitz–Jing.
-#   4. En cada réplica se ajustan ETS, ARIMA y ARIMAX y se registra el AICc.
-#   5. El peso de cada modelo es la frecuencia con que tuvo el AICc más bajo.
+#   4. En cada réplica se reconstruye la serie y se reserva un holdout interno
+#      con los últimos h = 12 meses del entrenamiento. Se ajustan ETS, ARIMA y
+#      ARIMAX sobre el resto y se pronostica el holdout.
+#   5. El ganador de la réplica es el modelo con menor promedio de rangos de
+#      MASE y Winkler 95 % en ese holdout (desempeño fuera de muestra).
+#      No se usa AICc.
+#   6. El peso de cada modelo es la frecuencia con que gana en las B réplicas.
 #
 # El resultado se guarda en caché (bmc_bootstrap.rds). Es determinista: misma
-# semilla + mismos datos + mismo B => mismos pesos. Por eso no hace falta
-# recalcularlo en cada corrida.
+# semilla + mismos datos + mismos parámetros => mismos pesos.
 
-titulo("PARTE 5 — Pesos del BMC por bootstrap")
+titulo("PARTE 5 — Pesos del BMC por bootstrap (selección fuera de muestra)")
 
 modelos_candidatos <- c("ETS_Auto", "ARIMA_Auto", "ARIMAX_Covid")
+h_holdout_bmc <- h_test
 
 # ---- 5.1 Insumos: STL, residuos y largo de bloque ----------------------------
 
@@ -492,26 +491,54 @@ remuestrear_mbb <- function(residuos, largo, cantidad) {
   residuos[posiciones[seq_len(cantidad)]]
 }
 
-# AICc de una familia en una réplica. Devuelve Inf si el ajuste falla.
-ajustar_familia <- function(datos_replica, familia) {
+# Evalúa una familia en el holdout interno de una réplica.
+# Devuelve MASE y Winkler 95 % (Inf si falla).
+evaluar_familia_holdout <- function(inner_train, inner_test, familia) {
+  escala <- mean(abs(diff(as.numeric(inner_train$Consumo_boot), lag = 12)), na.rm = TRUE)
+  if (!is.finite(escala) || escala <= 0) {
+    escala <- mean(abs(diff(as.numeric(inner_train$Consumo_boot))), na.rm = TRUE)
+  }
+  if (!is.finite(escala) || escala <= 0) escala <- NA_real_
+
   ajuste <- tryCatch(
     switch(
       familia,
-      ETS_Auto     = datos_replica %>% model(Modelo = ETS(Consumo_boot)),
-      ARIMA_Auto   = datos_replica %>% model(Modelo = ARIMA(Consumo_boot)),
-      ARIMAX_Covid = datos_replica %>% model(Modelo = ARIMA(Consumo_boot ~ covid))
+      ETS_Auto     = inner_train %>% model(Modelo = ETS(Consumo_boot)),
+      ARIMA_Auto   = inner_train %>% model(Modelo = ARIMA(Consumo_boot)),
+      ARIMAX_Covid = inner_train %>% model(Modelo = ARIMA(Consumo_boot ~ covid))
     ),
     error = function(e) NULL
   )
-  if (is.null(ajuste)) return(Inf)
-  valor <- tryCatch(glance(ajuste) %>% pull(AICc), error = function(e) NA_real_)
-  # `unname` es imprescindible: fable devuelve el AICc con nombre ("AICc.year")
-  # y al combinarlo con c() contamina los nombres del vector de modelos.
-  valor <- unname(valor)
-  if (length(valor) != 1 || !is.finite(valor)) Inf else valor
+  if (is.null(ajuste)) return(list(MASE = Inf, Winkler_95 = Inf))
+
+  fc <- tryCatch(
+    ajuste %>% forecast(new_data = inner_test, level = 95),
+    error = function(e) NULL
+  )
+  if (is.null(fc)) return(list(MASE = Inf, Winkler_95 = Inf))
+
+  eval_tbl <- tryCatch(
+    fc %>%
+      hilo(level = 95) %>%
+      unpack_hilo("95%") %>%
+      as_tibble() %>%
+      select(Mes, pronostico = .mean, lo = `95%_lower`, hi = `95%_upper`) %>%
+      left_join(as_tibble(inner_test) %>% select(Mes, real = Consumo_boot), by = "Mes"),
+    error = function(e) NULL
+  )
+  if (is.null(eval_tbl) || nrow(eval_tbl) == 0) return(list(MASE = Inf, Winkler_95 = Inf))
+
+  err <- eval_tbl$real - eval_tbl$pronostico
+  mase <- if (is.finite(escala)) mean(abs(err)) / escala else Inf
+  wink <- mean((eval_tbl$hi - eval_tbl$lo) +
+                 (2 / 0.05) * pmax(eval_tbl$lo - eval_tbl$real, 0) +
+                 (2 / 0.05) * pmax(eval_tbl$real - eval_tbl$hi, 0))
+  if (!is.finite(mase)) mase <- Inf
+  if (!is.finite(wink)) wink <- Inf
+  list(MASE = mase, Winkler_95 = wink)
 }
 
-# Una réplica completa: remuestrea, rearma la serie y compite los 3 modelos.
+# Una réplica completa: remuestrea, rearma la serie y elige por holdout.
 funcion_replica <- function(i) {
   set.seed(semilla + i)
 
@@ -523,23 +550,47 @@ funcion_replica <- function(i) {
     select(Mes, Consumo_boot, covid) %>%
     as_tsibble(index = Mes)
 
+  h <- h_holdout_bmc
+  n_rep <- nrow(datos_replica)
+  if (n_rep <= h + 24) {
+    return(list(replica = i, seleccion = NA_character_, avisos = "Réplica demasiado corta para holdout."))
+  }
+
+  inner_train <- datos_replica %>% slice_head(n = n_rep - h)
+  inner_test  <- datos_replica %>% slice_tail(n = h)
+
   avisos <- character()
-  aicc <- withCallingHandlers(
-    c(
-      ETS_Auto     = ajustar_familia(datos_replica, "ETS_Auto"),
-      ARIMA_Auto   = ajustar_familia(datos_replica, "ARIMA_Auto"),
-      ARIMAX_Covid = ajustar_familia(datos_replica, "ARIMAX_Covid")
-    ),
+  metricas <- withCallingHandlers(
+    lapply(stats::setNames(modelos_candidatos, modelos_candidatos), function(fam) {
+      evaluar_familia_holdout(inner_train, inner_test, fam)
+    }),
     warning = function(w) {
       avisos <<- c(avisos, conditionMessage(w))
       invokeRestart("muffleWarning")
     }
   )
-  aicc <- stats::setNames(as.numeric(aicc), c("ETS_Auto", "ARIMA_Auto", "ARIMAX_Covid"))
 
-  seleccion <- if (all(!is.finite(aicc))) NA_character_ else names(which.min(aicc))
+  tab <- tibble(
+    modelo = modelos_candidatos,
+    MASE = vapply(metricas, `[[`, numeric(1), "MASE"),
+    Winkler_95 = vapply(metricas, `[[`, numeric(1), "Winkler_95")
+  )
 
-  list(replica = i, aicc = aicc, seleccion = seleccion, avisos = avisos)
+  if (all(!is.finite(tab$MASE)) && all(!is.finite(tab$Winkler_95))) {
+    seleccion <- NA_character_
+  } else {
+    tab <- tab %>%
+      mutate(
+        r_mase = rank(MASE, ties.method = "min"),
+        r_wink = rank(Winkler_95, ties.method = "min"),
+        r_medio = (r_mase + r_wink) / 2,
+        orden = match(modelo, modelos_candidatos)
+      ) %>%
+      arrange(r_medio, MASE, Winkler_95, orden)
+    seleccion <- tab$modelo[1]
+  }
+
+  list(replica = i, seleccion = seleccion, avisos = avisos)
 }
 
 # Corre el bootstrap en paralelo por tandas, con progreso y checkpoint.
@@ -559,8 +610,8 @@ correr_bootstrap <- function(pendientes) {
     cl,
     varlist = c(
       "residuos_stl", "largo_bloque", "train_data", "coef_covid",
-      "tendencia", "estacionalidad", "semilla",
-      "remuestrear_mbb", "ajustar_familia", "funcion_replica"
+      "tendencia", "estacionalidad", "semilla", "h_holdout_bmc", "modelos_candidatos",
+      "remuestrear_mbb", "evaluar_familia_holdout", "funcion_replica"
     ),
     envir = globalenv()
   )
@@ -588,7 +639,9 @@ parametros_bmc <- list(
   B = B_bootstrap,
   semilla = semilla,
   fin_train = as.character(fin_train),
-  metodo = "AICc",
+  metodo = "holdout_MASE_Winkler95_rango_medio",
+  criterio = "Menor promedio de rangos de MASE y Winkler 95 % en holdout h=12 (sin AICc)",
+  h_holdout = h_holdout_bmc,
   largo_bloque = largo_bloque,
   n_train = nrow(train_data)
 )
@@ -612,26 +665,13 @@ if (!forzar_bootstrap && file.exists(ruta_cache_pesos)) {
   }
 }
 
-# Si no hay caché pero sí el CSV de una corrida previa, se reutiliza.
-if (is.null(pesos_bmc) && !forzar_bootstrap && file.exists(ruta_pesos_csv)) {
-  tabla <- read_csv(ruta_pesos_csv, show_col_types = FALSE)
-  pesos_leidos <- tabla$peso[match(normalizar_nombre(modelos_candidatos), normalizar_nombre(tabla$modelo))]
-  if (!anyNA(pesos_leidos)) {
-    frecuencias <- tibble(
-      modelo = factor(modelos_candidatos, levels = modelos_candidatos),
-      n = tabla$n[match(normalizar_nombre(modelos_candidatos), normalizar_nombre(tabla$modelo))],
-      frecuencia = pesos_leidos,
-      peso = pesos_leidos
-    )
-    pesos_bmc    <- pesos_leidos
-    origen_pesos <- "CSV de una corrida previa (boo.R)"
-  }
-}
+# No se reutiliza un CSV previo: su método de selección puede diferir.
 
 # ---- 5.5 Recalcular si hace falta -------------------------------------------
 
 if (is.null(pesos_bmc)) {
-  cat("\nCalculando pesos del BMC (", B_bootstrap, "réplicas ·", num_cores, "núcleos )...\n")
+  cat("\nCalculando pesos del BMC (", B_bootstrap, " réplicas, ", num_cores,
+      " núcleos, criterio holdout MASE+Winkler sin AICc)...\n", sep = "")
 
   resultados <- list()
   hechos <- integer(0)
@@ -695,7 +735,7 @@ if (anyNA(pesos_bmc) || abs(sum(pesos_bmc) - 1) > 1e-8) {
 }
 
 cat("\nOrigen de los pesos:", origen_pesos, "\n")
-cat("\n--- Frecuencia con que cada modelo tuvo el mejor AICc ---\n")
+cat("\n--- Frecuencia con que cada modelo ganó (holdout h=12, MASE+Winkler, sin AICc) ---\n")
 print(as_tibble(frecuencias))
 cat("\nPesos asignados al BMC (ETS, ARIMA, ARIMAX):", round(pesos_bmc, 4), "\n")
 
@@ -703,8 +743,8 @@ if (max(pesos_bmc) > 0.999) {
   cat(
     "\nADVERTENCIA: pesos degenerados (un modelo concentra ~100%).",
     "\nEl BMC coincide prácticamente con", names(which.max(pesos_bmc)), ".",
-    "\nEsto es un resultado, no un error: se reporta como limitación y se",
-    "\ncompara con el ensamble de pesos iguales (Ensamble_Simple).\n"
+    "\nSe reporta como resultado y se compara con el ensamble de pesos iguales",
+    "\n(Ensamble_Simple).\n"
   )
 }
 
@@ -727,7 +767,6 @@ fit_modelos <- fit_modelos %>%
 
 cat("\nModelos disponibles para evaluar:\n")
 print(names(fit_modelos))
-
 # ==============================================================================
 # PARTE 6 — EVALUACIÓN FUERA DE MUESTRA (TEST FIJO)
 # ==============================================================================
@@ -1119,9 +1158,8 @@ titulo("PARTE 8 — Comparación, selección y previsión futura")
 # (Light_ARIMAX_BMC_IND2616_final_v2.R), con una diferencia: acá la tabla SÍ
 # elige; `modelo_final` sale de ella y no está escrita a mano.
 #
-# No se usa AICc para esta comparación: es una medida dentro de la muestra y la
-# dummy COVID lo inclina siempre hacia el ARIMAX (por eso el BMC colapsa a los
-# pesos 0/0/1). La comparación de pronóstico se hace con error fuera de muestra.
+# No se usa AICc: la comparación y la selección se hacen con métricas de
+# desempeño fuera de muestra (MASE y Winkler 95 %), no con ajuste intra-muestra.
 
 comparacion_modelos <- tabla_precision %>%
   select(.model, MASE_test = MASE, Winkler_test = Winkler_95) %>%
